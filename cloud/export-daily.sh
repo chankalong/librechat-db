@@ -45,9 +45,9 @@ echo "Saved: ${EXCEL_PATH}"
 echo "Saved: ${DATED_EXCEL}"
 echo "Latest: ${EXPORT_ROOT}/librechat-combined-latest.xlsx"
 
-if [ -n "${S3_BUCKET:-}" ]; then
-  echo "Uploading to s3://${S3_BUCKET}/${S3_PREFIX:-exports/}..."
-  python3 /app/upload-s3.py "$DATED_EXCEL"
+if [ -n "${BLOB_READ_WRITE_TOKEN:-}" ]; then
+  echo "Uploading to Vercel Blob..."
+  python3 /app/upload-vercel-blob.py "$DATED_EXCEL" "$RUN_DATE"
 fi
 
 echo "=== Done ==="

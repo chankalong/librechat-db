@@ -187,101 +187,105 @@ Redeploy the cron service. After the next export, check the bucket for `exports/
 
 > **Skip S3** if you only need files on the cron volume and will download manually from Railway — but then the API in Step 3 cannot serve files unless you also upload to S3.
 
----
+#### Option C — Vercel Blob (recommended for Next.js / Vercel)
 
-### Step 3 — Create the export API service
+Upload Excel to **Vercel Blob** after each export — easy to use from a Next.js app, Power BI, or any HTTP client. No Railway volume download needed.
 
-1. In the same Railway project → **+ New** → **GitHub Repo** → select the **same** `librechat-db` repo again.
-2. Rename the service to **`librechat-export-api`**.
-
-#### 3a. Build settings
-
-Same as cron:
-
-| Setting | Value |
-|---------|--------|
-| Dockerfile path | `cloud/Dockerfile` |
-
-#### 3b. Deploy settings (different from cron)
-
-**Settings** → **Deploy**:
-
-| Setting | Value |
-|---------|--------|
-| Custom start command | `/app/start-api.sh` |
-| Cron schedule | **Leave empty / disabled** (API runs 24/7) |
-| Restart policy | **On failure** |
-
-> **Important:** Two services share one repo but use **different start commands**. The API must **not** use the cron schedule.
-
-#### 3c. Environment variables
+1. [Vercel dashboard](https://vercel.com) → your Next.js project → **Storage** → **Blob** → **Create store**
+2. Connect the store to your project (Vercel adds `BLOB_READ_WRITE_TOKEN` to the project)
+3. Copy the token: Project → **Settings** → **Environment Variables** → `BLOB_READ_WRITE_TOKEN`
+4. On **`librechat-export-cron`** (Railway) → **Variables** → add:
 
 | Variable | Value |
 |----------|--------|
-| `API_KEY` | Generate a long random secret, e.g. `openssl rand -hex 32` |
-| `EXPORT_ROOT` | `/data/export` |
-| `S3_BUCKET` | Same as cron |
-| `S3_PREFIX` | `exports/` |
-| `S3_ENDPOINT` | Same as cron (if R2) |
-| `AWS_ACCESS_KEY_ID` | Same keys (read access is enough) |
-| `AWS_SECRET_ACCESS_KEY` | Same secret |
+| `BLOB_READ_WRITE_TOKEN` | paste token from Vercel |
+| `BLOB_PREFIX` | `librechat-exports` (optional folder) |
+| `BLOB_ACCESS` | `public` (default) or `private` |
 
-Save `API_KEY` somewhere safe — you need it for Power BI and curl.
+5. Push latest code and **Redeploy** the cron service
 
-#### 3d. Public URL
-
-**Settings** → **Networking** → **Generate domain**.
-
-You will get a URL like:
+After export, deploy logs show:
 
 ```
-https://librechat-export-api-production.up.railway.app
+Uploading to Vercel Blob...
+  url: https://xxxx.public.blob.vercel-storage.com/librechat-exports/librechat-combined-latest.xlsx
+  downloadUrl: https://xxxx.public.blob.vercel-storage.com/.../librechat-combined-latest.xlsx?download=1
 ```
 
-#### 3e. Deploy and test
+**Use in Next.js:**
 
-After deploy, logs should show:
-
-```
-Uvicorn running on http://0.0.0.0:8080
-```
-
-Test from your Mac:
-
-```bash
-export API_URL="https://librechat-export-api-production.up.railway.app"
-export API_KEY="paste-your-api-key"
-
-# Health (no auth)
-curl -s "$API_URL/health"
-
-# Metadata (requires key) — run AFTER cron has exported at least once
-curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/v1/export/metadata"
-
-# Download CSV
-curl -L -H "X-API-Key: $API_KEY" \
-  -o librechat-combined.csv \
-  "$API_URL/api/v1/export/latest.csv"
+```tsx
+// Public blob — direct link
+<a href="https://YOUR-STORE.public.blob.vercel-storage.com/librechat-exports/librechat-combined-latest.xlsx">
+  Download latest export
+</a>
 ```
 
-If metadata returns `404 No export found`, run the cron export once first (Step 1e).
+**Use in Power BI:** Get data → Web → paste the `downloadUrl` from logs.
 
-Interactive API docs: open `https://your-domain/docs` in a browser.
+**Private blobs:** set `BLOB_ACCESS=private` on the cron service. The blob URL is **not** publicly accessible — use one of the auth options below.
 
 ---
 
+## Private Vercel Blob + authenticated download
+
+Private blobs cannot be opened by URL alone. A **server** with `BLOB_READ_WRITE_TOKEN` must fetch the file, after checking your auth.
+
+### Option A — Next.js API on Vercel (if your dashboard is Next.js)
+
+1. Cron: `BLOB_ACCESS=private` (already uploads to Blob)
+2. Use the **`librechat-db-nextjs`** project (already has API routes)
+3. Deploy to Vercel + connect the same Blob store
+4. Set `EXPORT_API_KEY` on Vercel
+
+See [`librechat-db-nextjs/SETUP.md`](../librechat-db-nextjs/SETUP.md) for full steps.
+
+**Download (authenticated):**
+
+```bash
+curl -L -H "X-API-Key: YOUR_EXPORT_API_KEY" \
+  "https://your-nextjs-app.vercel.app/api/exports/latest" \
+  -o librechat-combined.xlsx
+```
+
+**Power BI:** Get data → Web → Advanced → URL above + `X-API-Key` header.
+
+Replace `EXPORT_API_KEY` check with **NextAuth session** in `librechat-db-nextjs/src/lib/auth.ts` if only logged-in users should download.
+
+**Full setup:** [`librechat-db-nextjs/SETUP.md`](../librechat-db-nextjs/SETUP.md)
+
+### Architecture
+
+```
+Cron (Railway)  ──upload──▶  Vercel Blob (private)
+                                    │
+                     BLOB_READ_WRITE_TOKEN (server only)
+                                    │
+                                    ▼
+                         librechat-db-nextjs (Vercel)
+                         EXPORT_API_KEY / session auth
+                                    │
+                         Power BI / curl / dashboard
+```
+
+**Full Next.js + Vercel setup:** see the sibling repo [`librechat-db-nextjs`](../librechat-db-nextjs/SETUP.md) (or `SETUP.md` in that project).
+
+**Never** put `BLOB_READ_WRITE_TOKEN` in browser code or public env vars (`NEXT_PUBLIC_*`).
+
+---
+
+### Step 3 — Download API (Next.js on Vercel)
+
+Use the sibling repo **`librechat-db-nextjs`** — it serves private Blob files with `EXPORT_API_KEY`.
+
+See [`librechat-db-nextjs/SETUP.md`](../librechat-db-nextjs/SETUP.md) for deploy steps.
+
 ### Step 4 — Connect Power BI
 
-1. Power BI Desktop → **Get data** → **Web**.
-2. Click **Advanced**.
-3. URL parts: `https://YOUR-API-DOMAIN/api/v1/export/latest.csv`
-4. HTTP request header parameters:
-   - **Header**: `X-API-Key`
-   - **Value**: your `API_KEY`
-5. **OK** → load data → build report.
-6. Publish to Power BI Service and set **scheduled refresh** (daily, after your cron time).
-
-Use **CSV** rather than Excel — Power BI handles it more reliably over HTTP.
+1. Power BI Desktop → **Get data** → **Web** → **Advanced**
+2. URL: `https://YOUR-APP.vercel.app/api/v1/export/latest.xlsx`
+3. Header: `X-API-Key` = your `EXPORT_API_KEY`
+4. Schedule refresh after the daily cron (e.g. 4:00 AM UTC)
 
 ---
 
@@ -289,10 +293,10 @@ Use **CSV** rather than Excel — Power BI handles it more reliably over HTTP.
 
 | What | When |
 |------|------|
-| Cron exports MongoDB → Excel | 3:00 AM UTC (change in `railway.json` or Railway UI) |
-| File uploaded to S3 | End of each cron run (if S3 configured) |
-| API serves latest file | Anytime |
-| Power BI refresh | Schedule after cron (e.g. 4:00 AM UTC) |
+| Cron exports MongoDB → Excel | 3:00 AM UTC |
+| File uploaded to Vercel Blob | End of each cron run |
+| Next.js API serves latest file | Anytime (with API key) |
+| Power BI refresh | After cron |
 
 ---
 
@@ -303,11 +307,9 @@ Use **CSV** rather than Excel — Power BI handles it more reliably over HTTP.
 | Build fails | Check Dockerfile path is `cloud/Dockerfile`, repo root is `/` |
 | `Set MONGO_URI or MONGO_PRIVATE_URL` | Add `${{MongoDB.MONGO_PRIVATE_URL}}` on cron service |
 | Cron runs but 0 messages | Confirm `MONGO_DB_NAME=test` |
-| API returns 401 | Check `X-API-Key` header matches `API_KEY` var |
-| API returns 404 | Cron has not run yet, or S3 vars missing on API service |
-| API and cron both run export on schedule | API start command must be `/app/start-api.sh`, cron disabled on API |
-| Export timeout | Normal for first run; check logs for batch progress |
-| MongoDB service name differs | When referencing vars, pick whatever your MongoDB service is called in Railway |
+| Next.js `404 Export not found` | Run cron once; check Blob store in Vercel |
+| Export timeout | Normal for first run (~5–15 min) |
+| MongoDB service name differs | When referencing vars, pick your MongoDB service in Railway |
 
 ---
 
@@ -573,125 +575,23 @@ Check logs for `=== Done ===` and download the Excel from the volume or S3.
 
 | Path | Purpose |
 |------|---------|
-| `cloud/Dockerfile` | Container with mongoexport + Python |
-| `cloud/export-daily.sh` | Main job: export JSON → Excel |
-| `cloud/export-messages.sh` | Batched messages export (private network) |
-| `cloud/upload-s3.py` | Optional upload to S3-compatible storage |
-| `cloud/api.py` | HTTP API for Excel / CSV / JSON downloads |
-| `cloud/storage.py` | Resolve latest export from volume or S3 |
-| `cloud/start-api.sh` | Start the API server |
+| `cloud/Dockerfile` | Cron container (Python + pymongo) |
+| `cloud/export-daily.sh` | Main job: export → Excel → Blob upload |
+| `cloud/export_collections.py` | MongoDB → JSON (pymongo) |
+| `cloud/upload-vercel-blob.py` | Upload Excel to Vercel Blob |
+| `cloud/test-mongo.sh` | Pre-flight MongoDB connection check |
+| `cloud/requirements.txt` | Python dependencies |
 | `railway.json` | Cron schedule + Docker build config |
-| `railway-api.json` | Always-on API service config |
+
+Download API lives in **`librechat-db-nextjs`**, not in this repo.
 
 ---
 
-## Export API (Power BI / external dashboards)
+## Export API (Power BI / dashboards)
 
-Yes — you can fetch the daily Excel (or CSV / JSON) over HTTP with an API key. This is the recommended way to connect **Power BI**, a custom dashboard, or any external tool.
+Use **`librechat-db-nextjs`** on Vercel to serve private Blob files with `EXPORT_API_KEY`.
 
-```mermaid
-flowchart LR
-  Cron[Export Cron] --> Vol[(Volume / S3)]
-  API[Export API service] --> Vol
-  API --> S3[(S3 / R2 optional)]
-  PBI[Power BI / Dashboard] -->|HTTPS + API key| API
-```
-
-### Architecture: two Railway services
-
-| Service | Role | Config |
-|---------|------|--------|
-| `librechat-export-cron` | Daily export MongoDB → Excel | `railway.json` (cron) |
-| `librechat-export-api` | Always-on HTTP API | Start command: `/app/start-api.sh` |
-
-**Important:** Railway volumes attach to one service. When cron and API are separate, enable **S3 upload on the cron service** so the API can read the same files from S3. Alternatively, mount the same bucket and set identical `S3_*` vars on both services.
-
-### API service setup
-
-1. Create a second Railway service from this repo (e.g. `librechat-export-api`).
-2. Set **Start Command** to `/app/start-api.sh` (or use `railway-api.json`).
-3. Set environment variables:
-
-| Variable | Value |
-|----------|--------|
-| `API_KEY` | Long random secret (required) |
-| `EXPORT_ROOT` | `/data/export` |
-| `S3_BUCKET` | Same bucket as cron (if using S3 bridge) |
-| `S3_PREFIX` | `exports/` |
-| `S3_ENDPOINT` | R2 endpoint (if applicable) |
-| `AWS_ACCESS_KEY_ID` | Read access to bucket |
-| `AWS_SECRET_ACCESS_KEY` | Read access to bucket |
-
-4. Generate a public domain in Railway (Settings → Networking → Generate Domain).
-
-### API endpoints
-
-All `/api/v1/*` routes require authentication via **`X-API-Key`** header or **`Authorization: Bearer <API_KEY>`**.
-
-| Method | Path | Returns |
-|--------|------|---------|
-| `GET` | `/health` | Health check (no auth) |
-| `GET` | `/api/v1/export/metadata` | Latest export info + available dates |
-| `GET` | `/api/v1/export/dates` | List of export dates |
-| `GET` | `/api/v1/export/latest.xlsx` | Latest Excel file |
-| `GET` | `/api/v1/export/{date}.xlsx` | Excel for a specific date |
-| `GET` | `/api/v1/export/latest.csv` | Latest data as CSV (best for Power BI) |
-| `GET` | `/api/v1/export/{date}.csv` | CSV for a specific date |
-| `GET` | `/api/v1/export/latest.json?page=1&limit=1000` | Paginated JSON rows |
-
-Interactive docs (when deployed): `https://your-api.up.railway.app/docs`
-
-### Example requests
-
-```bash
-export API_URL="https://librechat-export-api.up.railway.app"
-export API_KEY="your-secret-key"
-
-# Metadata
-curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/v1/export/metadata" | jq
-
-# Download Excel
-curl -L -H "X-API-Key: $API_KEY" \
-  -o librechat-combined.xlsx \
-  "$API_URL/api/v1/export/latest.xlsx"
-
-# Download CSV (recommended for Power BI)
-curl -L -H "X-API-Key: $API_KEY" \
-  -o librechat-combined.csv \
-  "$API_URL/api/v1/export/latest.csv"
-```
-
-### Power BI setup
-
-**Option A — CSV (recommended)**
-
-1. Power BI Desktop → **Get data** → **Web**
-2. URL: `https://your-api.up.railway.app/api/v1/export/latest.csv`
-3. **Advanced** → add HTTP request header:
-   - Header: `X-API-Key`
-   - Value: your `API_KEY`
-4. Load → build visuals → schedule refresh in Power BI Service
-
-**Option B — Excel**
-
-1. **Get data** → **Web**
-2. URL: `https://your-api.up.railway.app/api/v1/export/latest.xlsx`
-3. Same `X-API-Key` header as above
-
-**Option C — Paginated JSON** (custom apps, large datasets)
-
-```
-GET /api/v1/export/latest.json?page=1&limit=1000
-```
-
-Loop pages until `page >= total_pages`.
-
-### Security notes
-
-- Always use **HTTPS** (Railway provides this on generated domains).
-- Rotate `API_KEY` if exposed; never commit it to git.
-- The API is read-only — it only serves export files, not live MongoDB access.
-- Restrict who receives the API key; consider IP allowlisting via Railway/Vercel middleware if needed later.
+See [`librechat-db-nextjs/SETUP.md`](../librechat-db-nextjs/SETUP.md) and [`librechat-db-nextjs/README.md`](../librechat-db-nextjs/README.md).
 
 ---
 
