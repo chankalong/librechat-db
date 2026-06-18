@@ -21,6 +21,5 @@ COPY cloud/export-daily.sh cloud/export-messages.sh cloud/upload-s3.py cloud/api
 RUN chmod +x /app/export-daily.sh /app/export-messages.sh /app/upload-s3.py /app/start-api.sh
 
 ENV EXPORT_ROOT=/data/export
-VOLUME ["/data/export"]
 
 CMD ["/app/export-daily.sh"]
