@@ -146,8 +146,12 @@ Saved: /data/export/YYYY-MM-DD/excel/librechat-combined.xlsx
 
 ```bash
 railway link          # pick librechat-export-cron
-railway run /app/export-daily.sh
+railway ssh -- /app/export-daily.sh
 ```
+
+> **Note:** `railway run` runs on your **Mac**, not in the container — `/app/export-daily.sh` only exists inside the deployed image.
+
+If SSH fails (cron container already stopped), click **Redeploy** in the Railway dashboard.
 
 First run may take **5–15 minutes** (~46k messages in batches).
 
@@ -548,8 +552,11 @@ Change the schedule in Railway UI or edit `railway.json` and redeploy.
 Run the service once manually (Railway → Deploy → Run, or temporarily remove `cronSchedule`):
 
 ```bash
-railway run --service librechat-export-cron /app/export-daily.sh
+railway link          # pick librechat-export-cron
+railway ssh -- /app/export-daily.sh
 ```
+
+If the cron container is not running, use **Redeploy** in the Railway dashboard instead.
 
 Check logs for `=== Done ===` and download the Excel from the volume or S3.
 

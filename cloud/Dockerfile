@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY json-to-excel.py /app/
 COPY cloud/export-daily.sh cloud/export-messages.sh cloud/upload-s3.py cloud/api.py cloud/storage.py cloud/start-api.sh /app/
-RUN chmod +x /app/export-daily.sh /app/export-messages.sh /app/upload-s3.py /app/start-api.sh
+RUN sed -i 's/\r$//' /app/*.sh && chmod +x /app/export-daily.sh /app/export-messages.sh /app/upload-s3.py /app/start-api.sh
 
 ENV EXPORT_ROOT=/data/export
 
