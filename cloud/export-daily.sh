@@ -30,31 +30,8 @@ if ! /app/test-mongo.sh; then
   exit 1
 fi
 
-export_collection() {
-  local collection=$1
-  local outfile="${EXPORT_DIR}/${collection}.json"
-  local errfile
-  errfile=$(mktemp)
-  echo -n "Exporting ${collection}... "
-  if ! mongoexport \
-    --uri="$MONGO_URI" \
-    --db "$DB_NAME" \
-    --collection "$collection" \
-    > "$outfile" 2>"$errfile"; then
-    echo "FAILED" >&2
-    sed 's/^/  /' "$errfile" >&2
-    rm -f "$errfile"
-    exit 1
-  fi
-  rm -f "$errfile"
-  local count
-  count=$(grep -c '^{' "$outfile" 2>/dev/null || echo 0)
-  echo "${count} documents"
-}
-
-export_collection users
-export_collection conversations
-/app/export-messages.sh "$EXPORT_DIR"
+echo "Exporting collections via pymongo..."
+python3 /app/export_collections.py "$EXPORT_DIR"
 
 echo "Building Excel..."
 EXPORT_DIR="$EXPORT_DIR" python3 /app/json-to-excel.py
