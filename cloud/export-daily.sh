@@ -24,16 +24,29 @@ echo "=== LibreChat daily export (${RUN_DATE}) ==="
 echo "Export directory: ${EXPORT_DIR}"
 mkdir -p "$EXPORT_DIR"
 
+echo "Testing MongoDB connection..."
+if ! /app/test-mongo.sh; then
+  echo "Export aborted — fix MONGO_PRIVATE_URL on this service." >&2
+  exit 1
+fi
+
 export_collection() {
   local collection=$1
   local outfile="${EXPORT_DIR}/${collection}.json"
+  local errfile
+  errfile=$(mktemp)
   echo -n "Exporting ${collection}... "
-  mongoexport \
+  if ! mongoexport \
     --uri="$MONGO_URI" \
     --db "$DB_NAME" \
     --collection "$collection" \
-    --quiet \
-    > "$outfile"
+    > "$outfile" 2>"$errfile"; then
+    echo "FAILED" >&2
+    sed 's/^/  /' "$errfile" >&2
+    rm -f "$errfile"
+    exit 1
+  fi
+  rm -f "$errfile"
   local count
   count=$(grep -c '^{' "$outfile" 2>/dev/null || echo 0)
   echo "${count} documents"
