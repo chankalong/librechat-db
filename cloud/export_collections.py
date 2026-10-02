@@ -10,6 +10,70 @@ from pathlib import Path
 
 from bson.json_util import dumps
 from pymongo import MongoClient
+from pymongo.collection import Collection
+
+# Concurrent LibreChat traffic can shift counts while we batch-export messages.
+# Re-count after the dump and allow a modest absolute drift vs the live total.
+DEFAULT_MESSAGE_COUNT_TOLERANCE = 500
+
+
+def message_export_count_tolerance() -> int:
+    raw = os.environ.get("MESSAGE_EXPORT_COUNT_TOLERANCE")
+    if raw is None or raw == "":
+        return DEFAULT_MESSAGE_COUNT_TOLERANCE
+    try:
+        value = int(raw)
+    except ValueError:
+        print(
+            f"WARNING: invalid MESSAGE_EXPORT_COUNT_TOLERANCE={raw!r}, "
+            f"using {DEFAULT_MESSAGE_COUNT_TOLERANCE}",
+            file=sys.stderr,
+        )
+        return DEFAULT_MESSAGE_COUNT_TOLERANCE
+    return max(0, value)
+
+
+def validate_message_export_count(
+    coll: Collection,
+    snapshot_total: int,
+    exported: int,
+) -> None:
+    """Exit non-zero only on likely real export failures, not live-traffic skew."""
+    live_total = coll.count_documents({})
+    tolerance = message_export_count_tolerance()
+    drift_vs_live = abs(exported - live_total)
+    drift_vs_snapshot = abs(exported - snapshot_total)
+
+    if exported == 0 and live_total > 0:
+        print(
+            f"ERROR: exported 0 messages but database has {live_total}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    if drift_vs_live <= tolerance:
+        if drift_vs_snapshot != 0 or drift_vs_live != 0:
+            print(
+                f"WARNING: snapshot count was {snapshot_total}, exported {exported}, "
+                f"live count {live_total} (within tolerance ±{tolerance})",
+                file=sys.stderr,
+            )
+        return
+
+    if drift_vs_snapshot <= tolerance:
+        print(
+            f"WARNING: snapshot expected {snapshot_total}, exported {exported}, "
+            f"live count {live_total}; accepted via snapshot tolerance ±{tolerance}",
+            file=sys.stderr,
+        )
+        return
+
+    print(
+        f"ERROR: message export count mismatch — snapshot {snapshot_total}, "
+        f"exported {exported}, live {live_total} (tolerance ±{tolerance})",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 
 def get_client() -> MongoClient:
@@ -60,9 +124,7 @@ def export_messages_batched(
             skip += batch_size
             batch += 1
 
-    if exported != total:
-        print(f"WARNING: expected {total}, exported {exported}", file=sys.stderr)
-        raise SystemExit(1)
+    validate_message_export_count(coll, total, exported)
 
     return exported
 
